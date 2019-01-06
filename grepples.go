@@ -43,7 +43,7 @@ func ConfigureFromFlags() *Config {
 		Bucket:         flag.String("bucket", "", "Name of S3 bucket to operate in"),
 		Prefix:         flag.String("prefix", "", "Bucket object base prefix"),
     KeyMatch:       flag.String("key-match", "", "String match on S3 object key"),
-    ContentMatch:   flag.String("content-match", "", "String match on S3 object key"),
+    ContentMatch:   flag.String("content-match", "", "String match on S3 object content"),
     MaxKeys:        flag.Int("max-keys", 1000, "Maximum number of keys per page when listing S3 objects"),
     MaxWorkers:     flag.Int("max-workers", 250, "Maximum number of processing workers"),
     SortByKey:      flag.Bool("sort-by-key", true, "Sort output by object key, lexicographically"),

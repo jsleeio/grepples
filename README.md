@@ -15,7 +15,7 @@ Usage of ./grepples:
   -bucket string
     	Name of S3 bucket to operate in
   -content-match string
-    	String match on S3 object key
+    	String match on S3 object content
   -extra-newlines
     	Output an extra newline after each object's matches (default true)
   -fit-to-tty
