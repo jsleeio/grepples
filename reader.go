@@ -1,11 +1,11 @@
 package main
 
 import (
-  "path"
-  "bufio"
-  "io"
+	"bufio"
 	"compress/bzip2"
 	"compress/gzip"
+	"io"
+	"path"
 )
 
 // TransparentExpandingReader creates a Reader that transparently decompresses based
