@@ -1,0 +1,3 @@
+steps:
+  - label: ':docker: Build'
+    command: 'make docker IMAGEBASE=$IMAGEBASE TAG=$BUILDKITE_TAG BRANCH=$BUILDKITE_BRANCH'
