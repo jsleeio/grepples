@@ -6,17 +6,14 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"os"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"golang.org/x/crypto/ssh/terminal"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -142,76 +139,21 @@ func searchObject(ctx context.Context, config *Config, svc *s3.S3, id int, task 
 	return result, nil
 }
 
-func ttyWidth() int {
-	// try ioctl (TIOCGWINSZ) approach first
-	if width, _, err := terminal.GetSize(0); err == nil {
-		return width
-	}
-	// if that fails, try $COLUMNS environment variable
-	c := os.Getenv("COLUMNS")
-	if width, err := strconv.ParseInt(c, 10, 16); err == nil && width > 0 {
-		return int(width)
-	}
-	// help. please help
-	return 79
+// queueTicker prints the length of the task queue at intervals when it isn't
+// empty, if the appropriate option is enabled. Intended for debugging
+func queueTicker(config *Config, tasks chan Task) {
+  go func(t chan Task) {
+    ticker := time.NewTicker(time.Millisecond * 500)
+    for range ticker.C {
+      if l := len(t); l > 0 {
+        log.Printf("tasks remaining: %v", len(t))
+      }
+    }
+  }(tasks)
 }
 
-func leftN(s string, n int) string {
-	if n == 0 {
-		return s
-	}
-	l := len(s)
-	if n > l {
-		return s
-	}
-	return s[:n]
-}
-
-func main() {
-	config := ConfigureFromFlags()
-	flag.Parse()
-	sess, err := session.NewSession(&aws.Config{Region: aws.String(*config.Region)})
-	if err != nil {
-		log.Fatalf("error setting up S3 client: %v", err)
-	}
-	svc := s3.New(sess)
-	// allow a decent backlog to ensure retrieval of large objects does not block
-	// discovery of more objects -- at least not until there is a good queue to
-	// process
-	tasks := make(chan Task, 10000)
-	go func(t chan Task) {
-		ticker := time.NewTicker(time.Millisecond * 500)
-		for range ticker.C {
-			if l := len(t); l > 0 {
-				log.Printf("tasks remaining: %v", len(t))
-			}
-		}
-	}(tasks)
-	workerGroup, ctx := errgroup.WithContext(context.Background())
-	output := make(chan *Result)
-	workerGroup.Go(func() error { return discoverObjects(config, svc, tasks) })
-	for workerID := 0; workerID < *config.MaxWorkers; workerID++ {
-		workerGroup.Go(func() error {
-			workerID := workerID
-			for task := range tasks {
-				result, err := searchObject(ctx, config, svc, workerID, task)
-				if err != nil {
-					log.Printf("search error for %s: %v", task.Key, err)
-					return nil
-				}
-				select {
-				case output <- result:
-				case <-ctx.Done():
-					return ctx.Err()
-				}
-			}
-			return nil
-		})
-	}
-	go func() {
-		workerGroup.Wait()
-		close(output)
-	}()
+// printResults reads all the results and outputs them according to config.
+func printResults(config *Config, output chan *Result) {
 	totalObjects := 0
 	totalMatches := 0
 	var results []*Result
@@ -243,4 +185,45 @@ func main() {
 			fmt.Println()
 		}
 	}
+}
+
+func main() {
+	config := ConfigureFromFlags()
+	flag.Parse()
+	sess, err := session.NewSession(&aws.Config{Region: aws.String(*config.Region)})
+	if err != nil {
+		log.Fatalf("error setting up S3 client: %v", err)
+	}
+	svc := s3.New(sess)
+	// allow a decent backlog to ensure retrieval of large objects does not block
+	// discovery of more objects -- at least not until there is a good queue to
+	// process
+	tasks := make(chan Task, 10000)
+  queueTicker(config,tasks)
+	workerGroup, ctx := errgroup.WithContext(context.Background())
+	output := make(chan *Result)
+	workerGroup.Go(func() error { return discoverObjects(config, svc, tasks) })
+	for workerID := 0; workerID < *config.MaxWorkers; workerID++ {
+		workerGroup.Go(func() error {
+			workerID := workerID
+			for task := range tasks {
+				result, err := searchObject(ctx, config, svc, workerID, task)
+				if err != nil {
+					log.Printf("search error for %s: %v", task.Key, err)
+					return nil
+				}
+				select {
+				case output <- result:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			return nil
+		})
+	}
+	go func() {
+		workerGroup.Wait()
+		close(output)
+	}()
+  printResults(config,output)
 }
