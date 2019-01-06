@@ -4,11 +4,11 @@ import (
 	"bufio"
 	"compress/bzip2"
 	"compress/gzip"
+	"golang.org/x/crypto/ssh/terminal"
 	"io"
-  "os"
+	"os"
 	"path"
 	"strconv"
-	"golang.org/x/crypto/ssh/terminal"
 )
 
 // TransparentExpandingReader creates a Reader that transparently decompresses based

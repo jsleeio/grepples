@@ -142,14 +142,14 @@ func searchObject(ctx context.Context, config *Config, svc *s3.S3, id int, task 
 // queueTicker prints the length of the task queue at intervals when it isn't
 // empty, if the appropriate option is enabled. Intended for debugging
 func queueTicker(config *Config, tasks chan Task) {
-  go func(t chan Task) {
-    ticker := time.NewTicker(time.Millisecond * 500)
-    for range ticker.C {
-      if l := len(t); l > 0 {
-        log.Printf("tasks remaining: %v", len(t))
-      }
-    }
-  }(tasks)
+	go func(t chan Task) {
+		ticker := time.NewTicker(time.Millisecond * 500)
+		for range ticker.C {
+			if l := len(t); l > 0 {
+				log.Printf("tasks remaining: %v", len(t))
+			}
+		}
+	}(tasks)
 }
 
 // printResults reads all the results and outputs them according to config.
@@ -199,7 +199,7 @@ func main() {
 	// discovery of more objects -- at least not until there is a good queue to
 	// process
 	tasks := make(chan Task, 10000)
-  queueTicker(config,tasks)
+	queueTicker(config, tasks)
 	workerGroup, ctx := errgroup.WithContext(context.Background())
 	output := make(chan *Result)
 	workerGroup.Go(func() error { return discoverObjects(config, svc, tasks) })
@@ -225,5 +225,5 @@ func main() {
 		workerGroup.Wait()
 		close(output)
 	}()
-  printResults(config,output)
+	printResults(config, output)
 }
