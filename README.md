@@ -10,8 +10,8 @@ that may be incurred with the S3 API.
 ## usage
 
 ```
-$ ./grepples -h
-Usage of ./grepples:
+$ grepples -help
+Usage of grepples:
   -bucket string
     	Name of S3 bucket to operate in
   -content-match string
@@ -28,6 +28,10 @@ Usage of ./grepples:
     	Maximum number of processing workers (default 250)
   -object-keys
     	Include matching object keys in output (default true)
+  -only-list-key-matches
+    	Just print a list of objects matching -prefix and -key-match options
+  -only-list-matching-objects
+    	Don't print any content, just show keys of matching objects (like grep -l)
   -prefix string
     	Bucket object base prefix
   -region string

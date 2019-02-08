@@ -19,35 +19,39 @@ import (
 
 // Config holds core run configuration
 type Config struct {
-	Region        *string
-	Bucket        *string
-	Prefix        *string
-	KeyMatch      *string
-	ContentMatch  *string
-	MaxKeys       *int
-	MaxWorkers    *int
-	SortByKey     *bool
-	TasksTicker   *bool
-	ObjectKeys    *bool
-	ExtraNewlines *bool
-	FitToTTY      *bool
+	Region                  *string
+	Bucket                  *string
+	Prefix                  *string
+	KeyMatch                *string
+	ContentMatch            *string
+	MaxKeys                 *int
+	MaxWorkers              *int
+	SortByKey               *bool
+	TasksTicker             *bool
+	ObjectKeys              *bool
+	ExtraNewlines           *bool
+	FitToTTY                *bool
+	OnlyListKeyMatches      *bool
+	OnlyListMatchingObjects *bool
 }
 
 // ConfigureFromFlags sets up a config based on commandline flags
 func ConfigureFromFlags() *Config {
 	return &Config{
-		Region:        flag.String("region", "us-west-2", "AWS region to operate in"),
-		Bucket:        flag.String("bucket", "", "Name of S3 bucket to operate in"),
-		Prefix:        flag.String("prefix", "", "Bucket object base prefix"),
-		KeyMatch:      flag.String("key-match", "", "String match on S3 object key"),
-		ContentMatch:  flag.String("content-match", "", "String match on S3 object content"),
-		MaxKeys:       flag.Int("max-keys", 1000, "Maximum number of keys per page when listing S3 objects"),
-		MaxWorkers:    flag.Int("max-workers", 250, "Maximum number of processing workers"),
-		SortByKey:     flag.Bool("sort-by-key", true, "Sort output by object key, lexicographically"),
-		TasksTicker:   flag.Bool("tasks-ticker", false, "Enable debug logging of task queue length"),
-		ObjectKeys:    flag.Bool("object-keys", true, "Include matching object keys in output"),
-		ExtraNewlines: flag.Bool("extra-newlines", true, "Output an extra newline after each object's matches"),
-		FitToTTY:      flag.Bool("fit-to-tty", false, "Truncate output lines at $COLUMNS-1 characters"),
+		Region:                  flag.String("region", "us-west-2", "AWS region to operate in"),
+		Bucket:                  flag.String("bucket", "", "Name of S3 bucket to operate in"),
+		Prefix:                  flag.String("prefix", "", "Bucket object base prefix"),
+		KeyMatch:                flag.String("key-match", "", "String match on S3 object key"),
+		ContentMatch:            flag.String("content-match", "", "String match on S3 object content"),
+		MaxKeys:                 flag.Int("max-keys", 1000, "Maximum number of keys per page when listing S3 objects"),
+		MaxWorkers:              flag.Int("max-workers", 250, "Maximum number of processing workers"),
+		SortByKey:               flag.Bool("sort-by-key", true, "Sort output by object key, lexicographically"),
+		TasksTicker:             flag.Bool("tasks-ticker", false, "Enable debug logging of task queue length"),
+		ObjectKeys:              flag.Bool("object-keys", true, "Include matching object keys in output"),
+		ExtraNewlines:           flag.Bool("extra-newlines", true, "Output an extra newline after each object's matches"),
+		FitToTTY:                flag.Bool("fit-to-tty", false, "Truncate output lines at $COLUMNS-1 characters"),
+		OnlyListKeyMatches:      flag.Bool("only-list-key-matches", false, "Just print a list of objects matching -prefix and -key-match options"),
+		OnlyListMatchingObjects: flag.Bool("only-list-matching-objects", false, "Don't print any content, just show keys of matching objects (like grep -l)"),
 	}
 }
 
@@ -118,6 +122,10 @@ func (a ByTaskKey) Less(i, j int) bool { return a[i].Task.Key < a[j].Task.Key }
 // decompressing if necessary with TransparentExpandingReader. Returns
 // a Result
 func searchObject(ctx context.Context, config *Config, svc *s3.S3, id int, task Task) (*Result, error) {
+	if *config.OnlyListKeyMatches {
+		result := &Result{Task: task}
+		return result, nil
+	}
 	matchre := regexp.MustCompile(*config.ContentMatch)
 	obj, err := svc.GetObject(&s3.GetObjectInput{Bucket: aws.String(task.Bucket), Key: aws.String(task.Key)})
 	if err != nil {
@@ -139,9 +147,12 @@ func searchObject(ctx context.Context, config *Config, svc *s3.S3, id int, task 
 	return result, nil
 }
 
-// queueTicker prints the length of the task queue at intervals when it isn't
+// tasksTicker prints the length of the task queue at intervals when it isn't
 // empty, if the appropriate option is enabled. Intended for debugging
-func queueTicker(config *Config, tasks chan Task) {
+func tasksTicker(config *Config, tasks chan Task) {
+	if !*config.TasksTicker {
+		return
+	}
 	go func(t chan Task) {
 		ticker := time.NewTicker(time.Millisecond * 500)
 		for range ticker.C {
@@ -165,6 +176,10 @@ func printResults(config *Config, output chan *Result) {
 	sort.Sort(ByTaskKey(results))
 	ttyWidth := ttyWidth()
 	for _, result := range results {
+		if *config.OnlyListKeyMatches || *config.OnlyListMatchingObjects {
+			fmt.Printf("%s\n", result.Task.Key)
+			continue
+		}
 		if len(result.Output) == 0 {
 			continue
 		}
@@ -199,7 +214,7 @@ func main() {
 	// discovery of more objects -- at least not until there is a good queue to
 	// process
 	tasks := make(chan Task, 10000)
-	queueTicker(config, tasks)
+	tasksTicker(config, tasks)
 	workerGroup, ctx := errgroup.WithContext(context.Background())
 	output := make(chan *Result)
 	workerGroup.Go(func() error { return discoverObjects(config, svc, tasks) })
