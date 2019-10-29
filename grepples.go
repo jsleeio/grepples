@@ -165,12 +165,8 @@ func tasksTicker(config *Config, tasks chan Task) {
 
 // printResults reads all the results and outputs them according to config.
 func printResults(config *Config, output chan *Result) {
-	totalObjects := 0
-	totalMatches := 0
 	var results []*Result
 	for result := range output {
-		totalObjects++
-		totalMatches += len(result.Output)
 		results = append(results, result)
 	}
 	sort.Sort(ByTaskKey(results))
@@ -190,6 +186,9 @@ func printResults(config *Config, output chan *Result) {
 			if *config.FitToTTY {
 				fmt.Println(leftN(line, ttyWidth))
 			} else {
+				if line[len(line)-1] != '\n' {
+					line += "\n"
+				}
 				fmt.Print(line)
 			}
 		}
