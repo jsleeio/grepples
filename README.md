@@ -11,15 +11,17 @@ that may be incurred with the S3 API.
 
 ```
 $ grepples -help
-Usage of grepples:
+Usage of ./grepples:
   -bucket string
     	Name of S3 bucket to operate in
+  -colour
+    	Highlight matches in colour. Incompatible with -fit-to-tty
   -content-match string
     	String match on S3 object content
   -extra-newlines
     	Output an extra newline after each object's matches (default true)
   -fit-to-tty
-    	Truncate output lines at $COLUMNS-1 characters
+    	Truncate output lines at $COLUMNS-1 characters. Incompatible with -colour
   -key-match string
     	String match on S3 object key
   -max-keys int
@@ -82,11 +84,10 @@ $ grepples -bucket=mylogs -prefix=2019/01/05 -key-match=T02:00 [...other options
 * modularize code a bit
 * support Google Cloud Storage too
 * maybe support multiple key and content matchers
-* optional colourfulness when stdout is a terminal
 * optional surrounding-context lines
 * better error handling
 
 ## license
 
-Copyright 2018 John Slee.  Released under the terms of the MIT license
+Copyright 2019 John Slee.  Released under the terms of the MIT license
 [as included in this repository](LICENSE).

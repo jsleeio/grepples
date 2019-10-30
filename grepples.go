@@ -14,11 +14,17 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/logrusorgru/aurora"
 	"golang.org/x/sync/errgroup"
 )
 
+// RegexpMatcherFunc is a function that meets the required interface for
+// generating text regex search results
+type RegexpMatcherFunc func(re *regexp.Regexp, text string) (ResultItem, bool)
+
 // Config holds core run configuration
 type Config struct {
+	Colour                  *bool
 	Region                  *string
 	Bucket                  *string
 	Prefix                  *string
@@ -33,11 +39,13 @@ type Config struct {
 	FitToTTY                *bool
 	OnlyListKeyMatches      *bool
 	OnlyListMatchingObjects *bool
+	MatcherFunc             RegexpMatcherFunc
 }
 
 // ConfigureFromFlags sets up a config based on commandline flags
 func ConfigureFromFlags() *Config {
-	return &Config{
+	c := &Config{
+		Colour:                  flag.Bool("colour", false, "Highlight matches in colour. Incompatible with -fit-to-tty"),
 		Region:                  flag.String("region", "us-west-2", "AWS region to operate in"),
 		Bucket:                  flag.String("bucket", "", "Name of S3 bucket to operate in"),
 		Prefix:                  flag.String("prefix", "", "Bucket object base prefix"),
@@ -49,10 +57,27 @@ func ConfigureFromFlags() *Config {
 		TasksTicker:             flag.Bool("tasks-ticker", false, "Enable debug logging of task queue length"),
 		ObjectKeys:              flag.Bool("object-keys", true, "Include matching object keys in output"),
 		ExtraNewlines:           flag.Bool("extra-newlines", true, "Output an extra newline after each object's matches"),
-		FitToTTY:                flag.Bool("fit-to-tty", false, "Truncate output lines at $COLUMNS-1 characters"),
+		FitToTTY:                flag.Bool("fit-to-tty", false, "Truncate output lines at $COLUMNS-1 characters. Incompatible with -colour"),
 		OnlyListKeyMatches:      flag.Bool("only-list-key-matches", false, "Just print a list of objects matching -prefix and -key-match options"),
 		OnlyListMatchingObjects: flag.Bool("only-list-matching-objects", false, "Don't print any content, just show keys of matching objects (like grep -l)"),
 	}
+	flag.Parse()
+	if *c.FitToTTY && *c.Colour {
+		// this is quite tricky to do right because
+		// * content-match operates on the entire line of text (good, I think)
+		// * adding colour inserts characters (ANSI escape sequences) into the line
+		// * this makes the line longer
+		// * a match just before the edge of the terminal might cause incomplete
+		//   escape sequences to be emitted, possibly resulting in incorrect
+		//   highlighting (eg. the colouring might continue until another match)
+		log.Fatalf("cannot use -fit-to-tty and -colour simultaneously. Please choose one or the other")
+	}
+	if *c.Colour {
+		c.MatcherFunc = ColourizingMatcher
+	} else {
+		c.MatcherFunc = Matcher
+	}
+	return c
 }
 
 // Task identifies a discovered piece of work that needs to be processed
@@ -104,10 +129,19 @@ func discoverObjects(config *Config, svc *s3.S3, output chan Task) error {
 	return nil
 }
 
+// ResultItem holds a single text match result and related metadata
+type ResultItem struct {
+	Text string
+	// WidthAdjust stores the difference in string length between raw output
+	// and colourized output, to facilitate correct fit-to-TTY behaviour. Not
+	// currently used. TBA...
+	WidthAdjust int
+}
+
 // Result holds the results for a single task
 type Result struct {
 	Task   Task
-	Output []string
+	Output []ResultItem
 }
 
 // ByTaskKey implements sort.Interface for []*Result based on the .Task.Key
@@ -117,6 +151,27 @@ type ByTaskKey []*Result
 func (a ByTaskKey) Len() int           { return len(a) }
 func (a ByTaskKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByTaskKey) Less(i, j int) bool { return a[i].Task.Key < a[j].Task.Key }
+
+// ColourizingMatcher implements the RegexpMatcherFunc function interface
+// and returns results highlighted in bold pink
+func ColourizingMatcher(re *regexp.Regexp, text string) (ResultItem, bool) {
+	ctext := re.ReplaceAllStringFunc(text, func(s string) string {
+		return aurora.Bold(aurora.Green(s)).String()
+	})
+	if ctext != text {
+		return ResultItem{Text: ctext, WidthAdjust: len(ctext) - len(text)}, true
+	}
+	return ResultItem{}, false
+}
+
+// Matcher implements the RegexpMatcherFunc function interface and performs
+// regexp matching with no highlighting of any kind
+func Matcher(re *regexp.Regexp, text string) (ResultItem, bool) {
+	if re.MatchString(text) {
+		return ResultItem{Text: text, WidthAdjust: 0}, true
+	}
+	return ResultItem{}, false
+}
 
 // searchObject retrieves an object from S3 and scans it for matches,
 // decompressing if necessary with TransparentExpandingReader. Returns
@@ -137,11 +192,10 @@ func searchObject(ctx context.Context, config *Config, svc *s3.S3, id int, task 
 		return nil, err
 	}
 	scanner := bufio.NewScanner(reader)
-	result := &Result{Task: task, Output: []string{}}
+	result := &Result{Task: task, Output: []ResultItem{}}
 	for scanner.Scan() {
-		text := scanner.Text()
-		if matchre.MatchString(text) {
-			result.Output = append(result.Output, text)
+		if ri, matched := config.MatcherFunc(matchre, scanner.Text()); matched {
+			result.Output = append(result.Output, ri)
 		}
 	}
 	return result, nil
@@ -184,12 +238,12 @@ func printResults(config *Config, output chan *Result) {
 		}
 		for _, line := range result.Output {
 			if *config.FitToTTY {
-				fmt.Println(leftN(line, ttyWidth))
+				fmt.Println(leftN(line.Text, ttyWidth+line.WidthAdjust))
 			} else {
-				if line[len(line)-1] != '\n' {
-					line += "\n"
+				if line.Text[len(line.Text)-1] != '\n' {
+					line.Text += "\n"
 				}
-				fmt.Print(line)
+				fmt.Print(line.Text)
 			}
 		}
 		if *config.ExtraNewlines {
@@ -203,7 +257,6 @@ func printResults(config *Config, output chan *Result) {
 
 func main() {
 	config := ConfigureFromFlags()
-	flag.Parse()
 	sess, err := session.NewSession(&aws.Config{Region: aws.String(*config.Region)})
 	if err != nil {
 		log.Fatalf("error setting up S3 client: %v", err)
